@@ -1,8 +1,16 @@
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE DeriveGeneric #-}
 module Main where
 
 import Lib
-import Options.Applicative hiding (infoParser)
 import Data.Semigroup ((<>))
+import qualified System.IO.Strict as S
+import Data.Aeson
+import qualified Data.ByteString.Char8 as BS
+import qualified Data.ByteString.Lazy.Char8 as BSL
+import GHC.Generics
+import qualified Data.Yaml as Yaml
+import Options.Applicative hiding (infoParser)
 
 type ItemIndex       = Int
 type ItemTitle       = String
@@ -29,7 +37,13 @@ data Command = Info
 data Item = Item {  title :: ItemTitle
                   , description:: ItemDescription
                   , priority:: ItemPriority
-                  , dueBy:: ItemDueBy } deriving Show
+                  , dueBy:: ItemDueBy } deriving (Show, Generic)
+
+instance ToJSON Item
+
+data ToDoList = ToDoList  [Item] deriving (Generic, Show)
+
+instance ToJSON ToDoList
 
 itemIndexParser :: Parser ItemIndex
 itemIndexParser = argument auto (metavar "ITEMINDEX" <> help "index of item") 
@@ -134,6 +148,8 @@ run datapath List = putStrLn "List"
 run datapath (Remove idx) = putStrLn $ "Remove idx= " ++ show idx
 
 main :: IO ()
-main = do
-      Options datapath command <- execParser (info (optionsParser) ( progDesc "To-Do list manager"))
-      run datapath command
+main = BSL.putStrLn $ encode (ToDoList [Item "the-name" (Just "the-description") (Just "prio1") (Just "dueBye1"),
+                                       Item "the-name2" (Just "the-description2") (Just "prio2") (Just "dueBye2")])
+{-main = do-}
+      {-Options datapath command <- execParser (info (optionsParser) ( progDesc "To-Do list manager"))-}
+      {-run datapath command-}

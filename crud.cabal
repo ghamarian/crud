@@ -27,6 +27,11 @@ executable crud-exe
   build-depends:       base
                      , crud
                      , optparse-applicative
+                     , strict
+                     , bytestring
+                     , text
+                     , aeson
+                     , yaml
   default-language:    Haskell2010
 
 test-suite crud-test
