@@ -3,7 +3,6 @@
 module Main where
 
 import Lib
-import Data.Semigroup ((<>))
 import qualified System.IO.Strict as S
 import Data.Aeson
 import qualified Data.ByteString.Char8 as BS
@@ -11,6 +10,10 @@ import qualified Data.ByteString.Lazy.Char8 as BSL
 import GHC.Generics
 import qualified Data.Yaml as Yaml
 import Options.Applicative hiding (infoParser)
+import Control.Exception
+import Data.String.Utils
+import System.IO.Error
+import System.Directory
 
 type ItemIndex       = Int
 type ItemTitle       = String
@@ -40,10 +43,13 @@ data Item = Item {  title :: ItemTitle
                   , dueBy:: ItemDueBy } deriving (Show, Generic)
 
 instance ToJSON Item
+instance FromJSON Item
+   
 
 data ToDoList = ToDoList  [Item] deriving (Generic, Show)
 
 instance ToJSON ToDoList
+instance FromJSON ToDoList
 
 itemIndexParser :: Parser ItemIndex
 itemIndexParser = argument auto (metavar "ITEMINDEX" <> help "index of item") 
@@ -147,9 +153,25 @@ run datapath (Add item) = putStrLn $ "Add: item= " ++ show item
 run datapath List = putStrLn "List"
 run datapath (Remove idx) = putStrLn $ "Remove idx= " ++ show idx
 
+writeToDoList :: FilePath -> ToDoList -> IO ()
+writeToDoList dataPath todoList = BS.writeFile dataPath (Yaml.encode todoList)
+
+readToDoList :: FilePath -> IO ToDoList
+readToDoList dataPath =  do
+         maybeTodoList <- catchJust 
+                        (\e -> if isDoesNotExistError e then Just () else Nothing)
+                        (BS.readFile dataPath >>= return . Yaml.decode)
+                        (\_ -> return $ Just (ToDoList []))
+         case maybeTodoList of
+              Nothing -> error "Yaml file is corrupt"
+              Just todolist -> return todolist
+
 main :: IO ()
-main = BSL.putStrLn $ encode (ToDoList [Item "the-name" (Just "the-description") (Just "prio1") (Just "dueBye1"),
+main = do
+      Options datapath command <- execParser (info (optionsParser) ( progDesc "To-Do list manager"))
+      homeDir <- getHomeDirectory
+      let expandedDataPath = replace "~" homeDir datapath
+      writeToDoList expandedDataPath (ToDoList [Item "the-name" (Just "the-description") (Just "prio1") (Just "dueBye1"),
                                        Item "the-name2" (Just "the-description2") (Just "prio2") (Just "dueBye2")])
-{-main = do-}
-      {-Options datapath command <- execParser (info (optionsParser) ( progDesc "To-Do list manager"))-}
-      {-run datapath command-}
+      todo <- readToDoList expandedDataPath 
+      putStrLn $ show todo
