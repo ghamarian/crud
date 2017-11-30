@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DeriveGeneric #-}
+
 module Main where
 
 import Lib
@@ -14,19 +15,29 @@ import Control.Exception
 import Data.String.Utils
 import System.IO.Error
 import System.Directory
+import Data.Time
+import Data.List.Safe((!!))
+import Prelude hiding ((!!))
+
 
 type ItemIndex       = Int
 type ItemTitle       = String
 type ItemDescription = Maybe String
-type ItemPriority    = Maybe String
-type ItemDueBy       = Maybe String
+type ItemPriority    = Maybe Priority
+type ItemDueBy       = Maybe LocalTime
 
-data ItemUpdate = ItemUpdate { titleUpdate :: Maybe ItemTitle
+data ItemUpdate = ItemUpdate { titleUpdate       :: Maybe ItemTitle
                              , descriptionUpdate :: Maybe ItemDescription
-                             , priorityUpdate :: Maybe ItemPriority
-                             , dueByUpdate :: Maybe ItemDueBy } deriving Show
+                             , priorityUpdate    :: Maybe ItemPriority
+                             , dueByUpdate       :: Maybe ItemDueBy } deriving Show
 
 data Options = Options FilePath Command deriving Show
+
+data Priority = Low | Normal | High deriving (Show,  Generic)
+
+instance ToJSON Priority
+instance FromJSON Priority
+
 
 data Command = Info 
              | List 
@@ -41,6 +52,7 @@ data Item = Item {  title :: ItemTitle
                   , description:: ItemDescription
                   , priority:: ItemPriority
                   , dueBy:: ItemDueBy } deriving (Show, Generic)
+
 
 instance ToJSON Item
 instance FromJSON Item
@@ -57,11 +69,25 @@ itemIndexParser = argument auto (metavar "ITEMINDEX" <> help "index of item")
 itemTitleValueParser :: Parser String
 itemTitleValueParser = strOption (long "title" <> short 't'  <> metavar "TITLE" <> help "title")
 
-itemPriorityValueParser :: Parser String
-itemPriorityValueParser = strOption (long "priority" <> short 'p'  <> metavar "PRIORITY" <> help "priority")
+itemPriorityValueParser :: Parser Priority
+itemPriorityValueParser = option readPriority (long "priority" <> short 'p'  <> metavar "PRIORITY" <> help "priority")
+                              where readPriority = eitherReader $ \arg ->
+                                             case arg of
+                                                  "1" -> Right Low
+                                                  "2" -> Right Normal
+                                                  "3" -> Right High
+                                                  _  -> Left $ "Invalid Priority " ++ arg
+                                                   {-_  -> Left $ "Invalid Priority " ++ arg-}
 
-itemDueByValueParser :: Parser String
-itemDueByValueParser = strOption (long "due-by" <> short 'd'  <> metavar "DUE-BY" <> help "due-by")
+itemDueByValueParser :: Parser LocalTime 
+itemDueByValueParser = option readDateTime (long "due-by" <> short 'b'  <> metavar "DUE-BY" <> help "due-by")
+                         where 
+                               readDateTime = eitherReader $ \arg ->
+                                  case parseDateTimeMaybe arg of
+                                       (Just dateTime) -> Right dateTime
+                                       Nothing -> Left $ "Date/Time string must be in format " ++ dateTimeFormat
+                               parseDateTimeMaybe = parseTimeM False defaultTimeLocale dateTimeFormat
+                               dateTimeFormat = "%Y/%m/%d %H:%M:%S"
 
 itemDescriptionValueParser :: Parser String
 itemDescriptionValueParser = strOption (long "desc" <> short 'd' <> metavar "DESCRIPTION" <> help "description")
@@ -82,7 +108,7 @@ updateItemPriorityParser = Just
                           <$> itemPriorityValueParser
                           <|> flag' Nothing (long "clear-priority")
 
-updateItemDueByParser   :: Parser ItemPriority
+updateItemDueByParser   :: Parser ItemDueBy
 updateItemDueByParser  = Just 
                           <$> itemDueByValueParser
                           <|> flag' Nothing (long "clear-due-by")
@@ -147,11 +173,11 @@ dataPathParser = strOption $
 run :: FilePath -> Command -> IO ()
 run datapath Info = putStrLn "Info"
 run datapath Init = putStrLn "Init"
-run datapath (Update idx itemUpdate) = putStrLn $ "Update: idx= " ++ show idx ++ " itemupdate= " ++ show itemUpdate
-run datapath (View idx) = putStrLn $ "View idx= " ++ show idx
-run datapath (Add item) = putStrLn $ "Add: item= " ++ show item
+run datapath (Update idx itemUpdate) = updateItem datapath idx itemUpdate
+run datapath (View idx) = viewItem datapath idx
+run datapath (Add item) = addItem datapath item
 run datapath List = putStrLn "List"
-run datapath (Remove idx) = putStrLn $ "Remove idx= " ++ show idx
+run datapath (Remove idx) = deleteItem datapath idx
 
 writeToDoList :: FilePath -> ToDoList -> IO ()
 writeToDoList dataPath todoList = BS.writeFile dataPath (Yaml.encode todoList)
@@ -166,12 +192,62 @@ readToDoList dataPath =  do
               Nothing -> error "Yaml file is corrupt"
               Just todolist -> return todolist
 
+showItem :: ItemIndex -> Item -> IO ()
+showItem idx (Item title mbDescription mbPriority mbDueBy) = do
+   putStrLn $ "[" ++  show idx ++ "]: " ++ title
+   putStr " Descriptin: "
+   putStrLn $ showField id mbDescription
+   putStr " Priority: "
+   putStrLn $ showField show mbPriority
+   putStr " Due by: "
+   putStrLn $ showField (formatTime defaultTimeLocale "%Y/%m/%d %H:%M:%S")  mbDueBy
+
+showField :: (a -> String) -> Maybe a -> String
+showField f (Just a) = f a
+showField _ Nothing = "(not set)"
+
+addItem :: FilePath -> Item -> IO ()
+addItem datapath item = do
+   ToDoList items <- readToDoList datapath
+   let newToDoList = ToDoList (item:items)
+   writeToDoList datapath newToDoList
+
+deleteItem :: FilePath -> ItemIndex -> IO ()
+deleteItem datapath idx = do
+   ToDoList items <- readToDoList datapath
+   let mbItems = items `removeAt` idx
+   case mbItems of
+        Nothing -> putStrLn "Invalid index number"
+        Just items' -> 
+           let toDoList = ToDoList items' in
+           writeToDoList datapath toDoList
+
+removeAt :: [a] -> Int -> Maybe [a] 
+removeAt items idx = 
+      if idx < 0 || idx >= length items
+        then Nothing
+        else let (before, after) = splitAt idx items
+                 _:after' = after
+                 xs' = before ++ after'
+            in Just xs'
+                               
+updateItem :: FilePath -> ItemIndex -> ItemUpdate -> IO ()
+updateItem datapath idx item = do
+   ToDoList items <- readToDoList datapath
+   putStrLn "Amir"
+
+viewItem :: FilePath -> ItemIndex -> IO ()
+viewItem datapath idx = do
+   ToDoList items <- readToDoList datapath
+   let x = items !! idx
+   case x of
+        Nothing -> putStrLn "Invalid item index"
+        Just a -> showItem idx a
+
 main :: IO ()
 main = do
       Options datapath command <- execParser (info (optionsParser) ( progDesc "To-Do list manager"))
       homeDir <- getHomeDirectory
       let expandedDataPath = replace "~" homeDir datapath
-      writeToDoList expandedDataPath (ToDoList [Item "the-name" (Just "the-description") (Just "prio1") (Just "dueBye1"),
-                                       Item "the-name2" (Just "the-description2") (Just "prio2") (Just "dueBye2")])
-      todo <- readToDoList expandedDataPath 
-      putStrLn $ show todo
+      run expandedDataPath command
+
